@@ -2,10 +2,10 @@
   "compilerOptions": {
     "incremental": true,
     "target": "es2020",
-    "outDir": "build/main",
     "rootDir": ".",
+    "baseUrl": "./src",
     "moduleResolution": "node",
-    "module": "commonjs",
+    "declarationMap": true,
     "declaration": true,
     "inlineSourceMap": true,
     "allowJs": true,
@@ -26,6 +26,10 @@
     /* Additional Checks */
     "noUnusedLocals": false
     /* Report errors on unused locals. */,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "noUnusedParameters": false
     /* Report errors on unused parameters. */,
     "noImplicitReturns": true
@@ -49,7 +53,8 @@
       "esnext"
     ],
     "types": [
-      "node"
+      "node",
+      "vite/client"
     ],
     "typeRoots": [
       "node_modules/@types",
@@ -57,11 +62,11 @@
     ]
   },
   "include": [
-    "src/**/*.ts"
+    "src/server/**/*.ts"
   ],
   "exclude": [
     "node_modules/**",
     "./build"
   ],
-  "compileOnSave": false
+  "compileOnSave": false,
 }

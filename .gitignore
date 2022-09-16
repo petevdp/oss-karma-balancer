@@ -1,6 +1,7 @@
 /node_modules/
 /config.json5
-!/.env
+/.env.local
 /logs
 /build
-!/.env
+/dist/
+tsconfig.tsbuildinfo

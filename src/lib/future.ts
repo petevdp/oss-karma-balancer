@@ -1,4 +1,3 @@
-
 type Resolve<T> = (value: (T | PromiseLike<T>)) => void;
 type Reject = (reason?: any) => void;
 
@@ -29,7 +28,7 @@ export class Future<T> implements Promise<T> {
 
 
     this.resolve = (value) => {
-      if (this.fulfilled) throw new AlreadyResolvedError();
+      if (this.fulfilled) throw new AlreadyFulfilledError();
       this.fulfilled = true;
       if (value instanceof Promise) {
         value.then(v => this.resolve(value));
@@ -38,7 +37,7 @@ export class Future<T> implements Promise<T> {
       }
     };
     this.reject = (value: any) => {
-      if (this.fulfilled) throw new AlreadyResolvedError();
+      if (this.fulfilled) throw new AlreadyFulfilledError();
       _reject(value);
     };
 
@@ -53,8 +52,8 @@ export class Future<T> implements Promise<T> {
 
 }
 
-export class AlreadyResolvedError extends Error {
+export class AlreadyFulfilledError extends Error {
   constructor() {
-    super('This future has already been resolved');
+    super('Future has already been fulfilled!');
   }
 }

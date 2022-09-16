@@ -1,7 +1,7 @@
 import { logger } from './logger';
 import { readFileSync } from 'fs';
-import JSON5 from 'json5';
-import * as t from 'io-ts';
+import JSON5 from '../../../node_modules/json5';
+import * as t from '../../../node_modules/io-ts';
 import { options } from './cli';
 
 export const ConfigCodec = t.type({

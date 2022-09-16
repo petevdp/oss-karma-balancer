@@ -9,6 +9,7 @@ import { MESSAGE } from 'triple-beam';
 import { prettyPrint } from '@base2/pretty-print-object';
 import { Format, format } from 'logform';
 import { environment } from './environment';
+import * as console from 'console';
 
 type LogCallbackWithMeta<T> = (
   error?: any,
@@ -134,8 +135,8 @@ export function setupLogger() {
 
 
     logger.add(new winston.transports.Console({
+      debugStdout: true,
       format: consoleFormat,
-      debugStdout: true
     }));
   }
 }

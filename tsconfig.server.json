@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "build/server",
+    "module": "commonjs"
+  },
+  "include": [
+    "src/server/**/*.ts"
+  ]
+}

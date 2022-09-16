@@ -1,5 +1,5 @@
-import * as t from 'io-ts';
-import dotenv from 'dotenv';
+import * as t from '../../../node_modules/io-ts';
+import dotenv from '../../../node_modules/dotenv';
 
 
 const EnvironmentCodec = t.type({

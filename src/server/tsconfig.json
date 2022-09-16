@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.server.json",
+  "references": [
+    {"path":  "../lib"}
+  ]
+}

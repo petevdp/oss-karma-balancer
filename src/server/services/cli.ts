@@ -1,9 +1,9 @@
-import { program } from 'commander';
-import * as t from 'io-ts';
+import { program } from '../../../node_modules/commander';
+import * as t from '../../../node_modules/io-ts';
 
 
 const OptionsCodec = t.type({
-  'config': t.string
+  'config': t.string,
 });
 
 type Options = t.TypeOf<typeof OptionsCodec>;
