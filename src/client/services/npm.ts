@@ -11,9 +11,12 @@ export type Package = {
     type: 'git',
     url: string;
   } | string;
+  versions: Record<string,PackageJson>;
 }
 
 export type PackageJson = {
+  name: string;
+  version: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 }

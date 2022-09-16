@@ -13,6 +13,7 @@ specifiers:
   '@types/lodash': ^4.14.184
   '@types/node': ^18.7.16
   '@types/parse-link-header': ^2.0.0
+  '@types/semver': ^7.3.12
   '@types/steamapi': ^2.2.2
   '@types/triple-beam': ^1.3.2
   '@types/uuid': ^8.3.4
@@ -37,7 +38,6 @@ specifiers:
   github-base: ^1.0.0
   io-ts: ^2.2.18
   json5: ^2.2.1
-  localstorage-cache: ^1.0.1
   lodash: ^4.17.21
   logform: ^2.4.2
   npm-api: ^1.0.1
@@ -49,6 +49,7 @@ specifiers:
   parse-link-header: ^2.0.0
   prettier: ^2.1.1
   rxjs: ^7.5.6
+  semver: ^7.3.7
   solid-blocks: ^0.0.2
   solid-js: ^1.5.4
   solid-js-form: ^0.1.5
@@ -76,6 +77,7 @@ dependencies:
   '@octokit/core': 4.0.5
   '@types/express': 4.17.13
   '@types/lodash': 4.14.184
+  '@types/semver': 7.3.12
   '@types/steamapi': 2.2.2
   '@types/triple-beam': 1.3.2
   '@types/uuid': 8.3.4
@@ -89,7 +91,6 @@ dependencies:
   github-base: 1.0.0
   io-ts: 2.2.18_fp-ts@2.12.3
   json5: 2.2.1
-  localstorage-cache: 1.0.1
   lodash: 4.17.21
   logform: 2.4.2
   npm-api: 1.0.1
@@ -97,6 +98,7 @@ dependencies:
   parse-human-date: 1.2.0
   parse-link-header: 2.0.0
   rxjs: 7.5.6
+  semver: 7.3.7
   solid-blocks: 0.0.2_solid-js@1.5.4
   solid-js-form: 0.1.5
   solid-simple-table: 1.2.0_@babel+core@7.19.0
@@ -1304,6 +1306,10 @@ packages:
     dependencies:
       '@types/node': 18.7.16
     dev: true
+
+  /@types/semver/7.3.12:
+    resolution: {integrity: sha512-WwA1MW0++RfXmCr12xeYOOC5baSC9mSb0ZqCquFzKhcoF4TvHu5MKOuXsncgZcpVFhB1pXd5hZmM0ryAoCp12A==}
+    dev: false
 
   /@types/serve-static/1.15.0:
     resolution: {integrity: sha512-z5xyF6uh8CbjAu9760KDKsH2FcDxZ2tFCsA4HIMWE6IkiYMXfVoa+4f9KX+FN0ZLsaMw1WNG2ETLA6N+/YA+cg==}
@@ -4600,10 +4606,6 @@ packages:
       type-fest: 0.3.1
     dev: true
 
-  /localstorage-cache/1.0.1:
-    resolution: {integrity: sha512-gdIVs9etaD0uJB594ST0NzJGWvZn73HUMAvmD+2YYcQmWjtzcYDtWatnhvnvJ6qeaxScPjYj8/0KTwpc0IYeqg==}
-    dev: false
-
   /locate-path/2.0.0:
     resolution: {integrity: sha512-NCI2kiDkyR7VeEKm27Kda/iQHyKJe1Bu0FlTbYp3CqJu+9IFe9bLyAjMxf5ZDDbEg+iMPzB5zYyUTSm8wVTKmA==}
     engines: {node: '>=4'}
@@ -5860,7 +5862,6 @@ packages:
     hasBin: true
     dependencies:
       lru-cache: 6.0.0
-    dev: true
 
   /serialize-error/7.0.1:
     resolution: {integrity: sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==}

@@ -10,22 +10,25 @@ export class LocalStorageCache<T> {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i) as string;
       if (key.startsWith(`cache/${topic}/`)) {
-        this.cache.set(key.split('/')[2], JSON.parse(localStorage.getItem(key)!));
+        const item = JSON.parse(localStorage.getItem(key)!) as Dated<T>;
+        item.created = new Date(item.created);
+        this.cache.set(key.split('/')[2], item);
       }
     }
   }
 
   async retrieve(key: string, fetchItem: () => Promise<T>) {
     const cachedElt = this.cache.get(key);
-    if (cachedElt && differenceInSeconds(new Date(), new Date(cachedElt.created)) < this.maxAge) {
+    if (cachedElt && differenceInSeconds(new Date(), cachedElt.created) < this.maxAge) {
       return cachedElt.elt;
     }
-    // this.cache.delete(key);
 
     const item = await fetchItem();
     let dated = { created: new Date(), elt: item };
     this.cache.set(key, dated);
-    localStorage.setItem(`cache/${this.topic}/${key}`, advancedStringify(dated));
+    setTimeout(() => {
+      localStorage.setItem(`cache/${this.topic}/${key}`, advancedStringify(dated));
+    });
     return item;
   }
 
