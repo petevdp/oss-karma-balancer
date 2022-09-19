@@ -1,4 +1,12 @@
-import { BehaviorSubject, from, Observable, Subject } from 'rxjs';
+import {Mutex} from 'async-mutex';
+import {
+  BehaviorSubject,
+  firstValueFrom,
+  from,
+  merge,
+  Observable,
+  Subject
+} from 'rxjs';
 import {
   catchError,
   combineLatestAll,
@@ -9,10 +17,12 @@ import {
   scan,
   share,
   startWith,
-  map
+  map,
+  bufferCount
 } from 'rxjs/operators';
 import { Future } from './future';
-import { isNonNulled } from './typeUtils';
+import { isDefined, isNonNulled } from './typeUtils';
+import * as buffer from 'buffer';
 
 
 export class AlreadyFulfilledError extends Error {
@@ -37,6 +47,33 @@ export type TimedChange<T> = Change<T> & { time: Date };
 export function flattenDeferred<T, O extends Observable<T>>(promise: Promise<O>): O {
   return from(promise).pipe(mergeAll()) as unknown as O;
 }
+
+export function makeCold<T>(cb: () => Promise<T>): Observable<T> {
+  return new Observable((o) => {
+    cb()
+      .then(out => o.next(out))
+      .finally(() => o.complete())
+  })
+}
+
+export function queueInner<T>(size: number) {
+  return (o: Observable<Observable<T>>) => {
+    o.pipe(
+      bufferCount(size),
+      concatMap(queued => {
+        return merge(...queued)
+      })
+    )
+  }
+}
+
+export function queuePromises<T, O>(size: number, asyncFunc: (elt: T) => Promise<O>) {
+  return (o: Observable<T>): Observable<O> => {
+    o.pipe(
+    );
+  };
+}
+
 
 
 /**
@@ -216,7 +253,7 @@ export function toChange<T>(type: Change<T>['type']) {
   });
 }
 
-export function countEntities<T,K>(getKey: (elt: T) => K) {
+export function countEntities<T, K>(getKey: (elt: T) => K) {
   return (o: Observable<Change<T>>): Observable<number> => {
     return o.pipe(
       auditChanges(getKey),
@@ -329,7 +366,7 @@ export interface BehaviorObservable<T> extends Observable<T> {
 }
 
 export async function getFirstAfterDeferred<T>(deferredSubject: Promise<Observable<T>>): Promise<T> {
-  return (await deferredSubject).pipe(first()).toPromise() as Promise<T>
+  return (await deferredSubject).pipe(first()).toPromise() as Promise<T>;
 }
 
 
@@ -341,5 +378,5 @@ export function catchErrorsOfClass<T>(errorType: Error['constructor']) {
 }
 
 export function isDeferred<T>(elt: any): elt is Promise<T> | Future<T> {
-  return (elt instanceof  Promise) || (elt instanceof Future);
+  return (elt instanceof Promise) || (elt instanceof Future);
 }

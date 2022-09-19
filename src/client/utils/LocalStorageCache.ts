@@ -1,8 +1,11 @@
-import { advancedStringify } from '../../lib/json';
+import {
+  advancedParseJson,
+  advancedStringifyJson
+} from 'lib/json';
 
 type Dated<T> = { created: Date; elt: T };
 import { differenceInSeconds, hoursToSeconds } from 'date-fns';
-
+const cacheDisabled = true;
 export class LocalStorageCache<T> {
   cache = new Map<string, Dated<T>>();
 
@@ -10,7 +13,7 @@ export class LocalStorageCache<T> {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i) as string;
       if (key.startsWith(`cache/${topic}/`)) {
-        const item = JSON.parse(localStorage.getItem(key)!) as Dated<T>;
+        const item = advancedParseJson(localStorage.getItem(key)!) as Dated<T>;
         item.created = new Date(item.created);
         this.cache.set(key.split('/')[2], item);
       }
@@ -18,6 +21,7 @@ export class LocalStorageCache<T> {
   }
 
   async retrieve(key: string, fetchItem: () => Promise<T>) {
+    if (cacheDisabled) return fetchItem();
     const cachedElt = this.cache.get(key);
     if (cachedElt && differenceInSeconds(new Date(), cachedElt.created) < this.maxAge) {
       return cachedElt.elt;
@@ -27,7 +31,7 @@ export class LocalStorageCache<T> {
     let dated = { created: new Date(), elt: item };
     this.cache.set(key, dated);
     setTimeout(() => {
-      localStorage.setItem(`cache/${this.topic}/${key}`, advancedStringify(dated));
+      localStorage.setItem(`cache/${this.topic}/${key}`, advancedStringifyJson(dated));
     });
     return item;
   }

@@ -1,5 +1,6 @@
 import { startOfToday, addDays, hoursToSeconds } from 'date-fns';
 import { timeCachedFetch } from '../utils/cachedFetch';
+import { joinUrl } from '../utils/joinUrl';
 
 export type DownloadsInRange = {
   start: Date;
@@ -11,7 +12,7 @@ export type Package = {
     type: 'git',
     url: string;
   } | string;
-  versions: Record<string,PackageJson>;
+  versions?: Record<string, PackageJson>;
 }
 
 export type PackageJson = {
@@ -22,16 +23,23 @@ export type PackageJson = {
 }
 
 export class NpmApi {
-  static async fetchRegistry(path: string, options?: RequestInit) {
-    const url = new URL(path, 'https://registry.npmjs.org');
-    const res = await timeCachedFetch(hoursToSeconds(4))(url, {
-      ...options,
-      headers: {
-        'Accept': 'application/json',
-        ...options?.headers
-      }
-    });
-    return res.json();
+  static async fetchRegistry(path: string, options: RequestInit = {}): Promise<any | null> {
+    try {
+
+      const url = joinUrl('/registry', path);
+      const res = await timeCachedFetch(hoursToSeconds(4))(url, {
+        ...options,
+        headers: {
+          'Accept': 'application/json',
+          ...options?.headers
+        }
+      });
+      // console.log(url, 'completed:', res.statusText)
+      if (!res.ok) return null
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
   }
 
   static encodePackage(name: string): string {
@@ -42,7 +50,7 @@ export class NpmApi {
   }
 
   static package(name: string) {
-    return NpmApi.fetchRegistry(this.encodePackage(name)) as Promise<Package>;
+    return NpmApi.fetchRegistry(this.encodePackage(name)) as Promise<Package | null>;
   }
 
   static async fetchLastWeekDownloadsCount(name: string): Promise<bigint> {
@@ -53,9 +61,11 @@ export class NpmApi {
     const fmt = (date: Date) => `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
 
     // https://api.npmjs.org/downloads/range/2017-02-25:9999-12-31/
-    const url = `https://api.npmjs.org/downloads/range/${fmt(today)}:${fmt(endOfWeek)}/${NpmApi.encodePackage(name)}`;
+    // const url = `https://api.npmjs.org/downloads/range/${fmt(today)}:${fmt(endOfWeek)}/${NpmApi.encodePackage(name)}`;
+    const url = `/npmApi/downloads/range/${fmt(today)}:${fmt(endOfWeek)}/${NpmApi.encodePackage(name)}`;
 
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const res = await timeCachedFetch(hoursToSeconds(4))(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return 0n;
     const data = await res.json() as DownloadsInRange;
     let count = 0n;
     for (let day of data.downloads) {

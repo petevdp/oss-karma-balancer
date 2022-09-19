@@ -1,4 +1,4 @@
-import { Component, createSignal } from 'solid-js';
+import { Accessor, Component, createSignal } from 'solid-js';
 import * as Yup from 'yup';
 import { Form, useField } from 'solid-js-form';
 import 'solid-simple-table/dist/SimpleTable.css';
@@ -6,6 +6,14 @@ import {
   DependencyDetails,
   cachedFetchUserDependencies
 } from './services/dependencies';
+import db from 'rxjs-debugger';
+import {Observable} from 'rxjs';
+
+
+if (import.meta.env.VITE_ENVIRONMENT === 'development') {
+  // @ts-ignore
+  db.RxJSDebugger.init(Observable);
+}
 
 const Input: Component<{ name: string, label: string }> = (props) => {
   const { field, form } = useField(props.name);
@@ -17,6 +25,7 @@ const Input: Component<{ name: string, label: string }> = (props) => {
       <label for={props.name}>
         {props.label}
         {field.required() ? ' *' : ''}
+        vite-plugin-commonjs
       </label>
       <input
         name={props.name}
@@ -40,33 +49,32 @@ function applyFilters(rows: DependencyDetails[], filters: Record<string, Filter>
   });
 }
 
-const Grid = (props: { rows: DependencyDetails[] }) => {
+const Grid = (props: { rows: Accessor<DependencyDetails[]> }) => {
   const [filters, setFilters] = createSignal({} as Record<string, Filter>);
-  const visibleRows = () => applyFilters(props.rows, filters());
-  console.log(props.rows);
+  const visibleRows = () => applyFilters(props.rows(), filters());
+  console.table(props.rows());
 
-  const rowElts = () => props.rows.map(row => <tr>
+  const rowElts = () => props.rows().map(row => <tr>
     <td>{row.name}</td>
     <td>{row.downloadsLastWeek.toString()}</td>
     <td>{row.contributors}</td>
-    <td>{row.contributors}</td>
     <td>{row.openIssues}</td>
     <td>{row.projectType}</td>
-    <td>{row.yourDependentRepos.join(', ')}</td>
-    <td>{row.labels.join(', ')}</td>
+    <td>{row.yourDependentRepos?.join(', ')}</td>
+    <td>{row.labels?.join(', ')}</td>
   </tr>);
-  console.log(rowElts());
 
   return (
     <table>
       <thead>
       <tr>
-        <td>Name Test</td>
+        <td>Name</td>
         <td>Recent Downloads</td>
         <td>Contributors</td>
-        <td>Last Update</td>
         <td>Open Issues</td>
         <td>Project Type</td>
+        <td>Dependent Repos</td>
+        <td>Labels</td>
       </tr>
       </thead>
       <tbody>
@@ -95,7 +103,7 @@ const App: Component = () => {
         <button type='submit'>Submit</button>
       </Form>
       {
-        rows().length > 0 && <Grid rows={rows()} />
+        rows().length > 0 && <Grid rows={rows} />
       }
     </div>
   );

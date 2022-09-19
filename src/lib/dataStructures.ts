@@ -7,6 +7,6 @@ export function upsertEltOneToMany<K, V>(key: K, value: V, map: OneToManyMap<K, 
     elts = []
     map.set(key, elts);
   }
-  elts.push(value);
+  if (!elts.includes(value)) elts.push(value);
   return map;
 }
