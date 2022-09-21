@@ -1,19 +1,41 @@
-import { Accessor, Component, createSignal } from 'solid-js';
+import {
+  Accessor,
+  Component,
+  createSignal,
+  onCleanup,
+  onMount
+} from 'solid-js';
 import * as Yup from 'yup';
-import { Form, useField } from 'solid-js-form';
+import { Form, FormType, useField } from 'solid-js-form';
 import 'solid-simple-table/dist/SimpleTable.css';
 import {
-  DependencyDetails,
-  cachedFetchUserDependencies
+  DependencyDetails, DependencyMessage
 } from './services/dependencies';
+
+import DependenciesWorker from './services/dependencies.ts?worker';
 import db from 'rxjs-debugger';
-import {Observable} from 'rxjs';
+import { concat, firstValueFrom, Observable, of, Subject } from 'rxjs';
+import {
+  catchError,
+  concatMap,
+  exhaustMap,
+  map,
+  mapTo,
+  mergeMap,
+  startWith,
+  tap
+} from 'rxjs/operators';
+import { listenToWorker } from './utils/webWorker';
+import { from as solidFrom } from 'solid-js';
+import { TaskQueue } from './utils/taskQueue';
+import { InMemoryCache } from './utils/inMemoryCache';
+import { hoursToSeconds } from 'date-fns';
+import { LocalStorageCache } from './utils/LocalStorageCache';
+import { useSearchParams } from '@solidjs/router';
+import { Mutex } from 'async-mutex';
+import { makeCold } from '../lib/asyncUtils';
 
-
-if (import.meta.env.VITE_ENVIRONMENT === 'development') {
-  // @ts-ignore
-  db.RxJSDebugger.init(Observable);
-}
+console.log(DependenciesWorker);
 
 const Input: Component<{ name: string, label: string }> = (props) => {
   const { field, form } = useField(props.name);
@@ -25,7 +47,6 @@ const Input: Component<{ name: string, label: string }> = (props) => {
       <label for={props.name}>
         {props.label}
         {field.required() ? ' *' : ''}
-        vite-plugin-commonjs
       </label>
       <input
         name={props.name}
@@ -49,19 +70,19 @@ function applyFilters(rows: DependencyDetails[], filters: Record<string, Filter>
   });
 }
 
-const Grid = (props: { rows: Accessor<DependencyDetails[]> }) => {
+const Grid = (props: { rows: DependencyDetails[] }) => {
   const [filters, setFilters] = createSignal({} as Record<string, Filter>);
-  const visibleRows = () => applyFilters(props.rows(), filters());
-  console.table(props.rows());
+  const visibleRows = () => applyFilters(props.rows, filters());
+  console.table(props.rows);
 
-  const rowElts = () => props.rows().map(row => <tr>
+  const rowElts = () => visibleRows().map(row => <tr>
     <td>{row.name}</td>
-    <td>{row.downloadsLastWeek.toString()}</td>
+    <td>{row.downloadsLastWeek?.toString() || 'no downloads found'}</td>
     <td>{row.contributors}</td>
     <td>{row.openIssues}</td>
     <td>{row.projectType}</td>
     <td>{row.yourDependentRepos?.join(', ')}</td>
-    <td>{row.labels?.join(', ')}</td>
+    {/*<td>{row.labels?.join(', ')}</td>*/}
   </tr>);
 
   return (
@@ -74,7 +95,7 @@ const Grid = (props: { rows: Accessor<DependencyDetails[]> }) => {
         <td>Open Issues</td>
         <td>Project Type</td>
         <td>Dependent Repos</td>
-        <td>Labels</td>
+        {/*<td>Labels</td>*/}
       </tr>
       </thead>
       <tbody>
@@ -84,26 +105,64 @@ const Grid = (props: { rows: Accessor<DependencyDetails[]> }) => {
   );
 };
 
+const userDependenciesCache = new LocalStorageCache<DependencyDetails[]>('userDependencies', hoursToSeconds(4));
+
 const App: Component = () => {
-  const [rows, setRows] = createSignal([] as DependencyDetails[]);
+  const depWorker = new DependenciesWorker();
+  const dep$ = listenToWorker(depWorker).pipe(map(evt => evt.data as DependencyDetails[]));
+  const submit$ = new Subject<FormType.Context<{ username: string }>>();
+  const [params, setParams] = useSearchParams();
+  const [submitting, setSubmitting] = createSignal(false);
+  const submission$ = submit$.pipe(
+    exhaustMap(function fetchUserDependenciesCached(form) {
+      // make cold so we only try to retrieve user dependencies/perform side effects when this is the active inner observable of the exhaustMap
+      return makeCold(() => {
+        console.log('submitting is true');
+        setSubmitting(true);
+        setParams({ username: form.values.username });
+        const msg: DependencyMessage = {
+          type: 'fetchUserDependencies',
+          username: form.values.username
+        };
+        return userDependenciesCache.retrieve(form.values.username, () => {
+          const depPromise = firstValueFrom(dep$);
+          depWorker.postMessage(msg);
+          depPromise.finally(() => {
+            setSubmitting(false);
+          })
+          return depPromise;
+        });
+      }).pipe(
+        startWith(undefined)
+      );
+    })
+  );
+
+  const rows = solidFrom(submission$);
+
+
+  onCleanup(() => {
+    submit$.complete();
+  });
+
 
   return (
     <div>
       <Form
-        initialValues={{ username: '' }}
+        initialValues={{ username: params['username'] || '' }}
         validation={{
           username: Yup.string().required()
         }}
         onSubmit={async (form) => {
-          const rows = await cachedFetchUserDependencies(form.values.username);
-          setRows(rows);
+          submit$.next(form);
         }}
       >
-        <Input name='username' label={'Github Username'} />
+        <Input name='username' label='Github Username' />
         <button type='submit'>Submit</button>
       </Form>
+      {submitting() && <div>loading....</div>}
       {
-        rows().length > 0 && <Grid rows={rows} />
+        !!rows() && <Grid rows={rows()!} />
       }
     </div>
   );

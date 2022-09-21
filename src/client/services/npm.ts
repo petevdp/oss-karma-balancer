@@ -1,6 +1,9 @@
-import { startOfToday, addDays, hoursToSeconds } from 'date-fns';
-import { timeCachedFetch } from '../utils/cachedFetch';
+import { addDays, startOfToday } from 'date-fns';
+import {
+  FetchFailedError, timeCachedFetch
+} from '../utils/cachedFetch';
 import { joinUrl } from '../utils/joinUrl';
+import { coalesceToNull } from '../../lib/typeUtils';
 
 export type DownloadsInRange = {
   start: Date;
@@ -22,24 +25,24 @@ export type PackageJson = {
   devDependencies?: Record<string, string>;
 }
 
-export class NpmApi {
-  static async fetchRegistry(path: string, options: RequestInit = {}): Promise<any | null> {
-    try {
+export type Manifest = PackageJson & {
+  repository: {
+    type: 'git',
+    url: string;
+  }
+}
 
-      const url = joinUrl('/registry', path);
-      const res = await timeCachedFetch(hoursToSeconds(4))(url, {
-        ...options,
-        headers: {
-          'Accept': 'application/json',
-          ...options?.headers
-        }
-      });
-      // console.log(url, 'completed:', res.statusText)
-      if (!res.ok) return null
-      return await res.json();
-    } catch (err) {
-      return null;
-    }
+export class NpmApi {
+  static async fetchRegistry<T>(path: string, options: RequestInit = {}): Promise<T | null> {
+    const url = joinUrl('/registry', path);
+    const out = await timeCachedFetch<T>(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        ...options?.headers
+      }
+    });
+    return coalesceToNull(out)?.data || null;
   }
 
   static encodePackage(name: string): string {
@@ -49,11 +52,12 @@ export class NpmApi {
     return name;
   }
 
-  static package(name: string) {
-    return NpmApi.fetchRegistry(this.encodePackage(name)) as Promise<Package | null>;
+  static async package(name: string, version: string = 'latest') {
+    const url = joinUrl(this.encodePackage(name), version);
+    return await NpmApi.fetchRegistry<Manifest>(url);
   }
 
-  static async fetchLastWeekDownloadsCount(name: string): Promise<bigint> {
+  static async fetchLastWeekDownloadsCount(name: string): Promise<bigint | null> {
 
     const today = startOfToday();
     const endOfWeek = addDays(today, 6);
@@ -64,11 +68,11 @@ export class NpmApi {
     // const url = `https://api.npmjs.org/downloads/range/${fmt(today)}:${fmt(endOfWeek)}/${NpmApi.encodePackage(name)}`;
     const url = `/npmApi/downloads/range/${fmt(today)}:${fmt(endOfWeek)}/${NpmApi.encodePackage(name)}`;
 
-    const res = await timeCachedFetch(hoursToSeconds(4))(url, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) return 0n;
-    const data = await res.json() as DownloadsInRange;
+    const out = await timeCachedFetch<DownloadsInRange>(url, { headers: { 'Accept': 'application/json' } });
+
+    if (out.type === 'error') return null;
     let count = 0n;
-    for (let day of data.downloads) {
+    for (let day of out.value.data.downloads) {
       count += BigInt(day.downloads);
     }
     return count;

@@ -5,6 +5,7 @@ import {
   from,
   merge,
   Observable,
+  ObservableInput,
   Subject
 } from 'rxjs';
 import {
@@ -48,14 +49,6 @@ export function flattenDeferred<T, O extends Observable<T>>(promise: Promise<O>)
   return from(promise).pipe(mergeAll()) as unknown as O;
 }
 
-export function makeCold<T>(cb: () => Promise<T>): Observable<T> {
-  return new Observable((o) => {
-    cb()
-      .then(out => o.next(out))
-      .finally(() => o.complete())
-  })
-}
-
 export function queueInner<T>(size: number) {
   return (o: Observable<Observable<T>>) => {
     o.pipe(
@@ -67,14 +60,12 @@ export function queueInner<T>(size: number) {
   }
 }
 
-export function queuePromises<T, O>(size: number, asyncFunc: (elt: T) => Promise<O>) {
-  return (o: Observable<T>): Observable<O> => {
-    o.pipe(
-    );
-  };
+
+export function makeCold<T>(task: () => ObservableInput<T>) {
+  return new Observable<T>((subscriber) => {
+    from(task()).subscribe(subscriber);
+  })
 }
-
-
 
 /**
  * mutates set with accumulated change elements

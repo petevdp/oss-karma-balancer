@@ -1,8 +1,7 @@
-import { from, Observable } from 'rxjs';
-import { hoursToSeconds } from 'date-fns';
-import { mergeAll, mergeMap } from 'rxjs/operators';
+import { EMPTY, from, Observable } from 'rxjs';
 import { flattenDeferred } from '../../lib/asyncUtils';
 import { timeCachedFetch } from '../utils/cachedFetch';
+import { InMemoryCache } from '../utils/inMemoryCache';
 
 
 //region Api Types
@@ -57,16 +56,12 @@ type Link = {
 //endregion
 
 export class GithubApi {
-  constructor() {
+  constructor(private maxRateLimitConsumption: number) {
   }
 
-  static async fetch(path: string, options?: RequestInit) {
-    return (await GithubApi.fetchFull(path, options)).json();
-  }
-
-  private static async fetchFull(path: string, options?: RequestInit) {
+  static async fetchFull<T>(path: string, options?: RequestInit) {
     const url = new URL(path, 'https://api.github.com');
-    const res = await timeCachedFetch(hoursToSeconds(4))(url, {
+    return await timeCachedFetch<T>(url, {
       ...options,
       headers: {
         ...options?.headers,
@@ -74,45 +69,60 @@ export class GithubApi {
         'Authorization': `token ${import.meta.env.VITE_GITHUB_PERSONAL_ACCESS_TOKEN}`
       }
     });
-    return res;
+  }
+
+  static async fetchOrNull<T>(path: string, options?: RequestInit): Promise<null | T> {
+    const out = await GithubApi.fetchFull<T>(path, options);
+    if (out.type === 'error') return null;
+    return out.value.data;
   }
 
 
-  static async fetchPaginatedEntityCount(path: string): Promise<number> {
-    const res = await GithubApi.fetchFull(`${path}?per_page=100`);
+  static async fetchPaginatedEntityCount(path: string): Promise<number | null> {
+    const out = await GithubApi.fetchFull<unknown[]>(`${path}?per_page=100`);
+    if (out.type === 'error') return null;
+    const res = out.value.response;
     const header = res.headers.get('Link');
     if (!header) {
-      return (await res.json()).length;
+      return out.value.data.length;
     }
     const links = parseLinkHeader(header);
     const numPages = links.last.page;
     const resLast = await GithubApi.fetchFull(links.last.url);
-    const lastPageCount = (await resLast.json()).length;
+    const lastPageCount = out.value.data.length;
     return (numPages - 1) * 100 + lastPageCount;
   }
 
-  static fetchPaginated(path: string): Observable<any> {
-    return flattenDeferred((async () => {
-      const initialRes = await GithubApi.fetchFull(`${path}?per_page=100`);
-      let header = initialRes.headers.get('Link')!;
-      // no other pages, return early
-      if (!header) return from(await initialRes.json());
-      const links = parseLinkHeader(header);
-      const pagePromises: Promise<any[]>[] = [];
-      const params = new URLSearchParams(links.last.url.split('?')[1]);
-      const pathNoParams = path.split('?')[0];
-      for (let i = 2; i <= links.last.page; i++) {
-        params.set('page', i.toString());
-        pagePromises.push(GithubApi.fetch(pathNoParams + '?' + params.toString()));
-      }
+  private static repoCache = new InMemoryCache<Repo>();
 
-      return from([initialRes.json(), ...pagePromises] as Promise<any[]>[]).pipe(
-        mergeAll(),
-        mergeMap(entities => from(entities))
-      );
-    })());
+  static repo(fullName: string) {
+    return this.repoCache.retrieve(fullName, () => GithubApi.fetchOrNull<Repo>(`/repos/${fullName}`));
   }
 
+  static fetchPaginated<T>(path: string): Observable<T> {
+    return flattenDeferred((async (): Promise<Observable<T>> => {
+      const out = await GithubApi.fetchFull<T[]>(`${path}?per_page=100`);
+      if (out.type === 'error') return EMPTY;
+      const initialRes = out.value.response;
+
+      let header = initialRes.headers.get('Link')!;
+      // no other pages, return early
+      if (!header) return from(await out.value.data);
+      const links = parseLinkHeader(header);
+      const params = new URLSearchParams(links.last.url.split('?')[1]);
+      const pathNoParams = path.split('?')[0];
+      const entities: T[] = out.value.data;
+      for (let i = 2; i <= links.last.page; i++) {
+        params.set('page', i.toString());
+        const entityBatch = await GithubApi.fetchOrNull<T[]>(pathNoParams + '?' + params.toString());
+        if (entityBatch === null) return EMPTY;
+        for (let entity of entityBatch) {
+          entities.push(entity);
+        }
+      }
+      return from(entities);
+    })());
+  }
 }
 
 type Links = {

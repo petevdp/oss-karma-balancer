@@ -1,55 +1,48 @@
 import { isNonNulled } from 'lib/typeUtils';
-import { LocalStorageCache } from '../utils/LocalStorageCache';
-import deepEquals from 'lodash/isEqual';
-import semverMaxSatisfying from 'semver/ranges/max-satisfying';
-import semverCompare from 'semver/functions/compare';
-import { $D } from 'rxjs-debug';
-import testRepo from '../../../scratches/test-repo.json';
 import {
   concat,
   EMPTY,
+  firstValueFrom,
   from,
   lastValueFrom,
-  Observable
+  Observable, of
 } from 'rxjs';
 import {
-  scan,
-  distinct,
-  last,
+  catchError,
   filter,
+  last,
   map,
-  mergeAll,
   mergeMap,
+  scan,
   share,
   shareReplay,
-  tap,
-  toArray,
   startWith,
-  catchError
+  tap,
+  toArray
 } from 'rxjs/operators';
 
 import { NpmApi, PackageJson } from './npm';
-import { Branch, GitBlob, GithubApi, Label, Repo, Tree } from './github';
+import { Branch, GitBlob, GithubApi, Repo, Tree } from './github';
 import { hoursToSeconds } from 'date-fns';
-import {
-  flattenDeferred, makeCold,
-  scanChangesToMap,
-  scanToMap
-} from '../../lib/asyncUtils';
-import { OneToManyMap, upsertEltOneToMany } from '../../lib/dataStructures';
-import { logger } from '../../server/services/logger';
+import { flattenDeferred } from '../../lib/asyncUtils';
+import { addOneToMany, OneToManyMap } from '../../lib/dataStructures';
+import { TaskQueue } from '../utils/taskQueue';
+import { joinUrl } from '../utils/joinUrl';
+import { FetchFailedError } from '../utils/cachedFetch';
+import { LocalStorageCache } from '../utils/LocalStorageCache';
 
 //region Types
 type Dep = string;
+type Path = string;
 
 type RecursiveDependency = {
   dep: Dep;
   path: Dep[];
 }
-type DepWithPaths = { name: string; paths: Dep[][] }
+type DependencyWithPaths = { name: string; paths: Dep[][] }
 export type DependencyDetails = {
   name: string;
-  downloadsLastWeek: bigint;
+  downloadsLastWeek: bigint | null;
   yourDependentRepos: string[];
   contributors: number;
   lastUpdate: Date;
@@ -59,93 +52,86 @@ export type DependencyDetails = {
 }
 //endregion
 
-const githubRepoRegex = /(git\+)?(https|ssh|git):?\/\/(www\.)?(git@)?github.com\/(?<fullName>[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/;
-const depCache = new LocalStorageCache<DependencyDetails[]>('userDependencies', hoursToSeconds(4));
 let recursiveDependencyCache = new Map<string, Observable<RecursiveDependency>>();
-
-export async function cachedFetchUserDependencies(username: string) {
-  return depCache.retrieve(username, () => fetchUserDependencies(username));
+export type DependencyMessage = {
+  type: 'fetchUserDependencies';
+  username: string
 }
+
+export type ProgressMessage = {
+  type: 'progress',
+  percentDone: number;
+}
+
+const progressSegments = {
+  loadRepos: 0.25,
+  resolveDependencies: 0.25,
+  loadDetails: 0.25
+};
+
+onmessage = (e) => {
+  console.log('dependencies.ts received event: ', e);
+  if (e.data.type === 'fetchUserDependencies') {
+    const msg = e.data as DependencyMessage;
+    fetchUserDependencies(msg.username).then((deps) => postMessage(deps));
+  }
+};
+
+const repoQueue = new TaskQueue(1);
 
 async function fetchUserDependencies(username: string) {
-  // let repos = await GithubApi.fetch(`/users/${username}/repos`) as Repo[];
-  const repos = [testRepo] as unknown as Repo[];
-  const repoPackageNames = new Map<string, string>();
-  const dep$ = from(repos).pipe(
-    mergeMap((repo) => {
-      const packageJsons = resolveRepoPackageJsons(repo);
-      packageJsons.subscribe((packageJson) => {
-        if (repoPackageNames.has(packageJson.name)) {
-          debugger;
-        }
-        repoPackageNames.set(packageJson.name, repo.full_name)
-      });
-      return resolvePackageJsonDependencies(packageJsons).pipe(groupDependencyPathsByDepName());
-    }),
-    shareReplay(),
-    // catchError((err, o) => {
-    // })
-  );
-
-  dep$.subscribe({
-    complete: () => console.log('dep completed'),
-    next: (d) => {
-      // debugger;
+  try {
+    let reposFetchOut = await GithubApi.fetchFull<Repo[]>(`/users/${username}/repos`);
+    if (reposFetchOut.type === 'error') {
+      throw new Error('unable to resolve user repos');
     }
-  });
 
-  const depToRepoPromise = (async function mapDepsToRepo() {
+    // const repos = [testRepo] as unknown as Repo[];
+    const repoPackageNames = new Map<string, string>();
 
-    // after this expression repoToPackageJsonNames is now guaranteed to be populated, since we waited for dep$ complete
-    // const depsByRootDependency = await lastValueFrom(dep$.pipe(
-    //   scan((map, dep) => {
-    //     for (let depPath of dep.paths) {
-    //       const rootDepName = depPath[0][0];
-    //       upsertEltOneToMany(rootDepName, dep.name, map);
-    //     }
-    //     return map;
-    //   }, new Map<string, string[]>),
-    //   startWith(new Map() as OneToManyMap<string, string>)
-    // ));
-    //
-    const depToRepoMap: OneToManyMap<string, string> = new Map();
-    // for (let repo of repos) {
-    //   for (let packageName of repoToPackageJsonNames.get(repo.full_name)!) {
-    //     const deps = depsByRootDependency.get(packageName)!;
-    //     for (let dep of deps) {
-    //       upsertEltOneToMany(dep, repo.full_name, depToRepoMap);
-    //     }
-    //   }
-    // }
-    return depToRepoMap;
-  })();
+    const dep$ = from(reposFetchOut.value.data).pipe(
+      mergeMap((repo) => {
+          console.log('repoQueue: ', { active: repoQueue.active$.value.size });
+          return repoQueue.enqueueTask(() => {
+            const packageJsons = resolveRepoPackageJsons(repo).pipe(share());
+            packageJsons.subscribe(([path, packageJson]) => {
+              repoPackageNames.set(path, repo.full_name);
+            });
+            return resolvePackageJsonDependencies(packageJsons, repo);
+          });
+        }
+      )
+    );
 
-  const arr = await lastValueFrom(dep$.pipe(
-    mergeMap(dep => getDepDetails(dep, dep.paths.map(path => repoPackageNames.get(path[0])!))),
-    filter(isNonNulled),
-    toArray()
-  ));
-  return arr;
+
+    const arr = await lastValueFrom(dep$.pipe(
+      mergeMap(dep => getDepDetails(dep)),
+      filter(isNonNulled),
+      toArray()
+    ));
+    return arr;
+  } catch (err) {
+    console.log(err);
+    throw err;
+  }
 }
 
 
-function resolveRepoPackageJsons(repo: Repo): Observable<PackageJson> {
+function resolveRepoPackageJsons(repo: Repo): Observable<[Path, PackageJson]> {
   return flattenDeferred((async function resolvePackageJson() {
-    let branch: Branch;
-    let tree: Tree;
-    try {
-      branch = (await GithubApi.fetch(`/repos/${repo.full_name}/branches/${repo.default_branch}`)) as Branch;
-      if (!branch || (branch as unknown as any).message === 'Branch not found') return EMPTY;
-      tree = (await GithubApi.fetch(`${branch.commit.commit.tree.url}?recursive=1`)) as Tree;
-    } catch (err) {
-      return EMPTY;
-    }
+    const branch = (await GithubApi.fetchOrNull<Branch>(`/repos/${repo.full_name}/branches/${repo.default_branch}`));
+    if (!branch || (branch as unknown as any).message === 'Branch not found') return EMPTY;
+    const tree = (await GithubApi.fetchOrNull<Tree>(`${branch.commit.commit.tree.url}?recursive=1`));
+    if (!tree || (tree as unknown as any).message === 'Tree not found') return EMPTY;
+
 
     const packageJsonBlobs = tree.tree.filter(blob => blob.path.endsWith('package.json'));
 
     return from(packageJsonBlobs).pipe(
-      mergeMap(async (blobRef): Promise<PackageJson | null> => {
-        const blob = (await GithubApi.fetch(blobRef.url)) as GitBlob;
+      mergeMap(async (blobRef): Promise<[Path, PackageJson] | null> => {
+        const blob = (await GithubApi.fetchOrNull<GitBlob>(blobRef.url));
+        if (!blob) return null;
+
         let packageJson: PackageJson;
         try {
           packageJson = JSON.parse(atob(blob.content)) as PackageJson;
@@ -158,10 +144,12 @@ function resolveRepoPackageJsons(repo: Repo): Observable<PackageJson> {
           console.warn(err);
           return null;
         }
-        return packageJson;
+        if (!packageJson.name) return null;
+        if (!(packageJson.dependencies || packageJson.devDependencies)) return null;
+        return [blobRef.path, packageJson] as [Path, PackageJson];
       }),
       filter(isNonNulled),
-      tap(pkg => console.log('found pkg json ' + pkg.name)),
+      tap(([path, pkg]) => console.log('found pkg json ' + pkg.name)),
       catchError((err) => {
         throw err;
       })
@@ -169,33 +157,50 @@ function resolveRepoPackageJsons(repo: Repo): Observable<PackageJson> {
   })());
 }
 
-// TODO: validate package json contents
-function resolvePackageJsonDependencies(packageJson$: Observable<PackageJson>): Observable<RecursiveDependency> {
-  const dep$ = packageJson$.pipe(
-    map((packageJson): Observable<RecursiveDependency> => {
-      let dependencies: Dep[] = [];
-      if (packageJson.dependencies) {
-        dependencies = Object.keys(packageJson.dependencies);
-      }
-      if (packageJson.devDependencies) {
+const depQueue = new TaskQueue(2);
 
-        dependencies = Object.keys(packageJson.devDependencies);
-      }
-      const rootDepPath: Dep[] = [packageJson.name];
-      return from(new Set(dependencies)).pipe(mergeMap(dep => resolvePackageDependenciesRecursive(dep, rootDepPath)));
+// TODO: validate package json contents
+function resolvePackageJsonDependencies(packageJson$: Observable<[Path, PackageJson]>, repo: Repo): Observable<RecursiveDependency> {
+  const dep$ = packageJson$.pipe(
+    mergeMap(([path, packageJson]): Observable<RecursiveDependency> => {
+      return depQueue.enqueueTask(() => {
+        let dependencies: Dep[] = [];
+        if (packageJson.dependencies) {
+          dependencies = Object.keys(packageJson.dependencies);
+        }
+        if (packageJson.devDependencies) {
+
+          dependencies = Object.keys(packageJson.devDependencies);
+        }
+        const rootDepPath: Dep[] = [joinUrl(joinUrl(repo.full_name, path), packageJson.name)];
+
+        const dep$ = from(dependencies).pipe(
+          map((dep): RecursiveDependency => ({ dep, path: rootDepPath }))
+        );
+
+        const subDep$ = from(new Set(dependencies)).pipe(
+          mergeMap(dep => {
+            return resolvePackageDependenciesRecursive(dep, rootDepPath);
+          })
+        );
+
+        return concat(
+          dep$,
+          subDep$
+        );
+      });
+
     }),
     catchError((err) => {
       debugger;
       throw err;
-    }),
-    share(),
-    mergeAll()
+    })
   );
   return dep$;
 }
 
 function resolvePackageDependenciesRecursive(parentDep: Dep, path: Dep[] = [], depth = 0): Observable<RecursiveDependency> {
-  if (depth === 2) {
+  if (depth === 0) {
     return EMPTY;
   }
   const parentDepName = parentDep;
@@ -204,86 +209,106 @@ function resolvePackageDependenciesRecursive(parentDep: Dep, path: Dep[] = [], d
   }
   console.log('depth: ', depth);
   console.log('computing ', parentDep);
-  const out = flattenDeferred((async (): Promise<Observable<RecursiveDependency>> => {
-    const npmPackageRegistry = await NpmApi.package(parentDepName);
-    if (!npmPackageRegistry || !npmPackageRegistry.versions || Object.keys(npmPackageRegistry.versions).length === 0) return EMPTY;
-    const maxVersion = Object.keys(npmPackageRegistry.versions).reduce((max, v) => semverCompare(max, v) == 1 ? max : v, '0.0.0');
-    if (!maxVersion) return EMPTY as Observable<RecursiveDependency>;
-    const packageVersion = npmPackageRegistry.versions[maxVersion];
-    let deps: Dep[] = [];
-    if (packageVersion.dependencies) deps = Object.keys(packageVersion.dependencies);
-    if (packageVersion.devDependencies) deps = [...deps, ...Object.keys(packageVersion.devDependencies)];
-    const recDeps = deps.map(dep => ({
-      dep,
-      path: [...path, parentDep]
-    }) as RecursiveDependency);
-    return concat(
-      recDeps,
-      from(recDeps).pipe(mergeMap(recDep => resolvePackageDependenciesRecursive(recDep.dep, recDep.path, depth + 1)))
-    ).pipe(shareReplay());
+  const out = flattenDeferred((async () => {
+    try {
+      const packageVersion = await NpmApi.package(parentDepName);
+      if (!packageVersion) return EMPTY;
+      let deps: Dep[] = [];
+      if (packageVersion.dependencies) deps = Object.keys(packageVersion.dependencies);
+      if (packageVersion.devDependencies) deps = [...deps, ...Object.keys(packageVersion.devDependencies)];
+      const recDeps = deps.map(dep => ({
+        dep,
+        path: [...path, parentDep]
+      }) as RecursiveDependency);
+      return concat(
+        recDeps,
+        from(recDeps).pipe(
+          mergeMap(recDep => resolvePackageDependenciesRecursive(recDep.dep, recDep.path, depth + 1))
+        )
+      ).pipe(shareReplay());
+    } catch (err) {
+      if (err instanceof FetchFailedError) return EMPTY;
+      throw err;
+    }
   })());
+
   recursiveDependencyCache.set(parentDep, out);
   return out;
 }
 
 function groupDependencyPathsByDepName() {
-  return (recDep$: Observable<RecursiveDependency>): Observable<DepWithPaths> => {
-    return recDep$.pipe(
+  return (recursiveDependency$: Observable<RecursiveDependency>): Observable<DependencyWithPaths> => {
+    return recursiveDependency$.pipe(
       scan(
-        (depMap, recDep) => upsertEltOneToMany(recDep.dep, recDep.path, depMap),
-        new Map<string, Dep[][]>()
+        (pathsMap, recDep) => addOneToMany(recDep.dep, recDep.path, pathsMap),
+        new Map() as OneToManyMap<string, string[]>
       ),
-      startWith(new Map<string, Dep[][]>),
+      // ensure we start with something in case no dependencies are received
+      startWith(new Map() as OneToManyMap<string, string[]>),
       last(),
-      mergeMap(depMap => from([...depMap.entries()].map(([depName, paths]) => ({
+      mergeMap(pathsMap => from(pathsMap.entries()).pipe(map(([depName, paths]) => ({
         name: depName,
         paths
       })))),
       catchError(err => {
-        debugger;
         throw err;
       })
     );
   };
 }
 
-async function getDepDetails(dep: DepWithPaths, dependentRepos: string[]) {
-  const npmPackagePromise = NpmApi.package(dep.name);
-  const downloadsPromise = NpmApi.fetchLastWeekDownloadsCount(dep.name);
-  const repo = await npmPackagePromise.then(async npmPackage => {
-    if (!npmPackage?.repository) return null;
-    const url = typeof npmPackage.repository === 'string' ? npmPackage.repository : npmPackage.repository.url;
-    const match = url.match(githubRepoRegex);
-    if (!match) {
-      return null;
-    }
-    let fullName = match!.groups!.fullName;
-    if (fullName.endsWith('.git')) {
-      fullName = fullName.slice(0, fullName.length - 4);
-    }
+const githubRepoRegex = /(git\+)?(https|ssh|git):?\/\/(www\.)?(git@)?github.com\/(?<fullName>[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/;
+const depDetailsQueue = new TaskQueue(10);
 
-    return await GithubApi.fetch(`/repos/${fullName}`) as Repo;
+function getDepDetails({ dep }: RecursiveDependency) {
+  return depDetailsQueue.enqueueTask(async () => {
+    const npmPackagePromise = NpmApi.package(dep);
+    const downloadsPromise = NpmApi.fetchLastWeekDownloadsCount(dep);
+    let repo: Repo | null;
+    try {
+      repo = await npmPackagePromise.then(async npmPackage => {
+        if (!npmPackage?.repository) return null;
+        const url = typeof npmPackage.repository === 'string' ? npmPackage.repository : npmPackage.repository.url;
+        const match = url.match(githubRepoRegex);
+        if (!match) {
+          return null;
+        }
+        let fullName = match!.groups!.fullName;
+        if (fullName.endsWith('.git')) {
+          fullName = fullName.slice(0, fullName.length - 4);
+        }
+
+        return GithubApi.repo(fullName);
+      });
+      if (!repo) return null;
+
+      // const labelsPromise = lastValueFrom(GithubApi.fetchPaginated(`/repos/${repo.full_name}/labels`).pipe(
+      //   map((label) => (label as Label).name),
+      //   toArray()
+      // ));
+      //
+      const contributorsPromise = GithubApi.fetchPaginatedEntityCount(`/repos/${repo.full_name}/contributors`);
+      let contributors = await contributorsPromise;
+      if (!isNonNulled(contributors)) return null;
+
+      const out: DependencyDetails = {
+        name: dep,
+        downloadsLastWeek: (await downloadsPromise),
+        yourDependentRepos: [],
+        contributors: await contributors,
+        projectType: 'npm',
+        lastUpdate: new Date(),
+        // labels: await labelsPromise,
+        labels: [],
+        openIssues: repo.open_issues_count
+      };
+      return out;
+    } catch (err) {
+      if (err instanceof FetchFailedError) {
+        return null;
+      }
+      throw err;
+    }
   });
-  if (!repo || (repo as unknown as any).message === 'Not Found') {
-    return null;
-  }
-
-  const labelsPromise = lastValueFrom(GithubApi.fetchPaginated(`/repos/${repo.full_name}/labels`).pipe(
-    map((label) => (label as Label).name),
-    toArray()
-  ));
-
-  let contributorsPromise = GithubApi.fetchPaginatedEntityCount(`/repos/${repo.full_name}/contributors`);
-  const out = {
-    name: dep.name,
-    downloadsLastWeek: (await downloadsPromise),
-    yourDependentRepos: dependentRepos,
-    contributors: await contributorsPromise,
-    projectType: 'npm',
-    lastUpdate: new Date(),
-    labels: await labelsPromise,
-    openIssues: repo.open_issues_count
-  } as DependencyDetails;
-
-  return out;
 }
+
