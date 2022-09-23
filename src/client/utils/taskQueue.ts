@@ -1,14 +1,15 @@
 import {
   BehaviorSubject,
-  concat,
+  combineLatest,
   firstValueFrom,
-  merge,
+  from,
+  Observable,
+  ObservableInput,
   Subject,
-  of,
-  ObservableInput, from, combineLatest, Subscription, Observable
+  Subscription
 } from 'rxjs';
 import { flattenDeferred } from '../../lib/asyncUtils';
-import { map, filter, mergeMap, share } from 'rxjs/operators';
+import { filter, map, mergeMap, share } from 'rxjs/operators';
 
 type Id = {};
 
@@ -121,7 +122,6 @@ export class TaskQueue implements Disposable {
     this.sub.unsubscribe();
   }
 }
-
 
 export function queuedMerge<T, O>(queue: TaskQueue, task: (elt: T) => ObservableInput<O>) {
   return (o: Observable<T>) => {

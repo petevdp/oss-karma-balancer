@@ -17,6 +17,10 @@ export type Repo = {
   owner: {
     login: string;
   }
+  fork: boolean;
+  forks: number;
+  topics: string[];
+  stargazers_count: number;
 }
 
 export type Branch = {
@@ -47,10 +51,6 @@ export type GitBlob = {
 export type Label = {
   id: number;
   name: string;
-}
-type Link = {
-  url: string;
-  page: number;
 }
 
 //endregion
@@ -88,8 +88,9 @@ export class GithubApi {
     }
     const links = parseLinkHeader(header);
     const numPages = links.last.page;
-    const resLast = await GithubApi.fetchFull(links.last.url);
-    const lastPageCount = out.value.data.length;
+    const resLast = await GithubApi.fetchFull<[]>(links.last.url);
+    if (resLast.type === 'error') return null;
+    const lastPageCount = resLast.value.data.length;
     return (numPages - 1) * 100 + lastPageCount;
   }
 
@@ -97,6 +98,15 @@ export class GithubApi {
 
   static repo(fullName: string) {
     return this.repoCache.retrieve(fullName, () => GithubApi.fetchOrNull<Repo>(`/repos/${fullName}`));
+  }
+
+  static async repos(username: string, includeForked: boolean) {
+    let reposOut = await GithubApi.fetchFull<Repo[]>(`/users/${username}/repos`);
+    if (reposOut.type === 'error') {
+      throw new Error('unable to resolve user repos');
+    }
+    let repos = reposOut.value.data;
+    return repos.filter(repo => includeForked || !repo.fork);
   }
 
   static fetchPaginated<T>(path: string): Observable<T> {
@@ -125,12 +135,19 @@ export class GithubApi {
   }
 }
 
+
+const linkPartRegex = /<(?<url>[^<>]+)>; rel="(?<rel>\w+)"/;
+
+type Link = {
+  url: string;
+  page: number;
+}
+
 type Links = {
   next: Link;
   prev: Link;
   last: Link;
 }
-const linkPartRegex = /<(?<url>[^<>]+)>; rel="(?<rel>\w+)"/;
 
 /**
  * link: <https://api.github.com/repositories/24841635/labels?page=2>; rel="next", <https://api.github.com/repositories/24841635/labels?page=2>; rel="last"

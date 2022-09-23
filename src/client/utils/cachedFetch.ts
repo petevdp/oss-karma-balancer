@@ -23,6 +23,11 @@ export class FetchFailedError extends Error {
 
 export type FetchOutput<T> = PossibleError<{ response: Response; data: T }, SyntaxError | FetchFailedError>
 
+/**
+ * Caches and queues requests to reduce response times and limit memory allocated to making requests
+ * @param url
+ * @param options
+ */
 export async function timeCachedFetch<T>(url: string | URL, options?: RequestInit): Promise<FetchOutput<T>> {
   const out = await firstValueFrom(requestQueue.enqueueTask(async (): Promise<FetchOutput<T>> => {
     const cache = await caches.open(cacheName);

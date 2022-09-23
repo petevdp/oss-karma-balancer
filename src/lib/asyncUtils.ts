@@ -1,4 +1,4 @@
-import {Mutex} from 'async-mutex';
+import { Mutex } from 'async-mutex';
 import {
   BehaviorSubject,
   firstValueFrom,
@@ -19,7 +19,8 @@ import {
   share,
   startWith,
   map,
-  bufferCount
+  bufferCount,
+  toArray
 } from 'rxjs/operators';
 import { Future } from './future';
 import { isDefined, isNonNulled } from './typeUtils';
@@ -54,17 +55,17 @@ export function queueInner<T>(size: number) {
     o.pipe(
       bufferCount(size),
       concatMap(queued => {
-        return merge(...queued)
+        return merge(...queued);
       })
-    )
-  }
+    );
+  };
 }
 
 
 export function makeCold<T>(task: () => ObservableInput<T>) {
   return new Observable<T>((subscriber) => {
     from(task()).subscribe(subscriber);
-  })
+  });
 }
 
 /**
@@ -370,4 +371,17 @@ export function catchErrorsOfClass<T>(errorType: Error['constructor']) {
 
 export function isDeferred<T>(elt: any): elt is Promise<T> | Future<T> {
   return (elt instanceof Promise) || (elt instanceof Future);
+}
+
+export class SchedulingError extends Error {
+}
+
+export function accumulateOutputSynchronous<T>(o: Observable<T>): T[] {
+  let out: T[] | undefined;
+  const sub = o.pipe(toArray()).subscribe((val) => out = val);
+  if (!isDefined(out)) {
+    sub.unsubscribe();
+    throw new SchedulingError('Given observable is not scheduled synchronously');
+  }
+  return out;
 }

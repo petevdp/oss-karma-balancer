@@ -1,6 +1,6 @@
 /node_modules/
 /config.json5
-/.env.local
+.env.local
 /logs
 /build
 /dist/

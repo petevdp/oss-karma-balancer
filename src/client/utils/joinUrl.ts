@@ -1,10 +1,9 @@
-export function joinUrl(url: URL|string, path: string): string {
-  let urlStr = url.toString()
-  let mutPath = path;
-
-  // normalize delimiters
-  if (urlStr.endsWith('/')) urlStr = urlStr.slice(0, urlStr.length - 1);
-  if (!mutPath.startsWith('/')) mutPath = '/' + mutPath;
-
-  return urlStr + mutPath;
+export function joinUrl(...args: string[]): string {
+  let urlStr: string = '';
+  for (let mutPath of args) {
+    if (urlStr.endsWith('/')) urlStr = urlStr.slice(0, urlStr.length - 1);
+    if (!mutPath.startsWith('/')) mutPath = '/' + mutPath;
+    urlStr = urlStr + mutPath;
+  }
+  return urlStr;
 }
